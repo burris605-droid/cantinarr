@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/backend_client.dart';
 import '../../auth/data/auth_service.dart';
+import 'inbox_management_screen.dart';
 
 class AnnouncementsScreen extends ConsumerStatefulWidget {
   const AnnouncementsScreen({super.key, required this.users});
@@ -178,6 +179,7 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
       body:Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:840),child:ListView(padding:const EdgeInsets.all(20),children:[
         Text('BURRIS EDITION · V2',style:theme.textTheme.labelLarge?.copyWith(color:theme.colorScheme.primary)),
         Text('Broadcast control',style:theme.textTheme.headlineMedium),
+        FilledButton.tonalIcon(onPressed:busy?null:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>InboxManagementScreen(users:widget.users))),icon:const Icon(Icons.inbox_outlined),label:const Text('Inbox management')),
         Wrap(spacing:8,children:[Chip(label:Text('$eligible push-ready users')),Chip(label:Text('$queued queued')),Chip(label:Text('$done completed'))]),
         if(error!=null)Text(error!,style:TextStyle(color:theme.colorScheme.error)),
         const Text('Official mobile alerts open Cantinarr. Full messages are also available in the web inbox.'),
