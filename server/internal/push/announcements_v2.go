@@ -56,6 +56,9 @@ func (h *Handler) v2Schema(ctx context.Context) error {
 		"CREATE INDEX IF NOT EXISTS burris_v2_due ON burris_v2_jobs(status,run_at)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, read_at INTEGER NOT NULL DEFAULT 0, UNIQUE(job_id,user_id))",
 		"CREATE INDEX IF NOT EXISTS burris_v2_inbox_user ON burris_v2_inbox(user_id,created)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_options (id INTEGER PRIMARY KEY CHECK(id=1), retention INTEGER NOT NULL DEFAULT 0, welcome INTEGER NOT NULL DEFAULT 0, sender INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT 'Welcome aboard!', body TEXT NOT NULL DEFAULT 'Welcome to our media server. Happy watching!')",
+		"INSERT OR IGNORE INTO burris_v2_options(id) VALUES(1)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_welcomed (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE)",
 	} {
 		if _,err:=h.db.ExecContext(ctx,q);err!=nil{return err}
 	}
@@ -207,8 +210,9 @@ func (h *Handler) StartAnnouncementWorker(ctx context.Context) {
 	if _,err:=h.db.ExecContext(ctx,"UPDATE burris_v2_jobs SET status='unknown',note='Server interrupted send; not replayed' WHERE status='running'");err!=nil {h.logger.Error("announcement worker recovery","err",err);return}
 	go func(){
 		ticker:=time.NewTicker(3*time.Second);defer ticker.Stop()
+		maintenance:=time.NewTicker(time.Minute);defer maintenance.Stop()
 		for {
-			select {case <-ctx.Done():return;case <-ticker.C:h.v2RunOne(ctx)}
+			select {case <-ctx.Done():return;case <-ticker.C:h.v2RunOne(ctx);case <-maintenance.C:h.v2Maintenance(ctx)}
 		}
 	}()
 }
@@ -299,4 +303,67 @@ func (h *Handler) v2Deliver(ctx context.Context,id string,sender int64,a announc
 	sent,failed=resp.Sent,resp.Failed
 	status,note="completed","Gateway acceptance is not proof of display"
 	pruneDeadTokens(h.db,h.logger,resp)
+}
+
+
+type v2Options struct {
+	Retention bool `json:"retention"`
+	Welcome bool `json:"welcome"`
+	Title string `json:"title"`
+	Body string `json:"body"`
+}
+
+func (h *Handler) V2Options(w http.ResponseWriter,r *http.Request) {
+	if !h.v2Ready(w,r){return}
+	var o v2Options
+	if r.Method==http.MethodGet {
+		if err:=h.db.QueryRowContext(r.Context(),"SELECT retention,welcome,title,body FROM burris_v2_options WHERE id=1").Scan(&o.Retention,&o.Welcome,&o.Title,&o.Body);err!=nil {writeJSON(w,500,map[string]string{"error":"options unavailable"});return}
+		writeJSON(w,200,o);return
+	}
+	claims:=auth.GetClaims(r.Context())
+	if claims==nil || !auth.HasPermission(claims.Role,auth.PermissionAdmin){writeJSON(w,403,map[string]string{"error":"administrator required"});return}
+	dec:=json.NewDecoder(http.MaxBytesReader(w,r.Body,8192));dec.DisallowUnknownFields()
+	if dec.Decode(&o)!=nil || dec.Decode(new(any))!=io.EOF {writeJSON(w,400,map[string]string{"error":"invalid options"});return}
+	a:=announcementRequest{Audience:"self",Title:o.Title,Body:o.Body}
+	if !a.valid(){writeJSON(w,400,map[string]string{"error":"invalid welcome message"});return}
+	o.Title,o.Body=a.Title,a.Body
+	tx,err:=h.db.BeginTx(r.Context(),nil)
+	if err!=nil {writeJSON(w,500,map[string]string{"error":"options unavailable"});return}
+	defer tx.Rollback()
+	var wasEnabled bool
+	err=tx.QueryRowContext(r.Context(),"SELECT welcome FROM burris_v2_options WHERE id=1").Scan(&wasEnabled)
+	// On opt-in, exclude every existing account; no surprise mass welcome.
+	if err==nil && o.Welcome && !wasEnabled {_,err=tx.ExecContext(r.Context(),"INSERT OR IGNORE INTO burris_v2_welcomed(user_id) SELECT id FROM users")}
+	if err==nil && !o.Welcome {_,err=tx.ExecContext(r.Context(),"DELETE FROM burris_v2_jobs WHERE status='queued' AND id LIKE 'welcome-%'")}
+	if err==nil {_,err=tx.ExecContext(r.Context(),"UPDATE burris_v2_options SET retention=?,welcome=?,sender=?,title=?,body=? WHERE id=1",o.Retention,o.Welcome,claims.UserID,o.Title,o.Body)}
+	if err==nil {err=tx.Commit()}
+	if err!=nil {writeJSON(w,500,map[string]string{"error":"options save failed"});return}
+	writeJSON(w,200,o)
+}
+
+func (h *Handler) v2Maintenance(ctx context.Context) {
+	var o v2Options;var sender int64
+	if err:=h.db.QueryRowContext(ctx,"SELECT retention,welcome,sender,title,body FROM burris_v2_options WHERE id=1").Scan(&o.Retention,&o.Welcome,&sender,&o.Title,&o.Body);err!=nil{return}
+	now:=time.Now().Unix()
+	if o.Retention {
+		if _,err:=h.db.ExecContext(ctx,"DELETE FROM burris_v2_jobs WHERE status IN ('completed','unknown','failed','inbox_only') AND created<?",now-30*86400);err!=nil {h.logger.Error("announcement retention","err",err)}
+	}
+	if !o.Welcome{return}
+	var role string
+	if err:=h.db.QueryRowContext(ctx,"SELECT role FROM users WHERE id=?",sender).Scan(&role);err!=nil||!auth.HasPermission(role,auth.PermissionAdmin){return}
+	users,err:=h.v2Candidates(ctx);if err!=nil{return}
+	for _,u:=range users {
+		if u.tokens==0 || h.prefs.checkMasters(u.id)!=nil {continue}
+		// Check and claim inside one transaction. Do not enqueue a welcome
+		// after the admin disabled or changed the option while scanning.
+		tx,err:=h.db.BeginTx(ctx,nil);if err!=nil{return}
+		res,err:=tx.ExecContext(ctx,"INSERT OR IGNORE INTO burris_v2_welcomed(user_id) SELECT ? WHERE EXISTS(SELECT 1 FROM burris_v2_options WHERE id=1 AND welcome=1 AND sender=? AND title=? AND body=?)",u.id,sender,o.Title,o.Body)
+		if err!=nil {tx.Rollback();continue}
+		n,_:=res.RowsAffected();if n!=1 {tx.Rollback();continue}
+		a:=announcementV2Request{announcementRequest:announcementRequest{Audience:"selected",UserIDs:[]int64{u.id},Title:o.Title,Body:o.Body},Key:fmt.Sprintf("welcome-%d-%d",u.id,now),Mode:"now",RunAt:now}
+		data,_:=json.Marshal(a)
+		_,err=tx.ExecContext(ctx,"INSERT INTO burris_v2_jobs(id,sender,payload,status,run_at,repeat_days,created) VALUES(?,?,?,'queued',?,0,?)",a.Key,sender,string(data),now,now)
+		if err==nil {err=tx.Commit()}
+		if err!=nil {tx.Rollback();h.logger.Error("announcement welcome queue","err",err)}
+	}
 }
