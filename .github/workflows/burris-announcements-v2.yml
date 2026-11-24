@@ -25,11 +25,12 @@ jobs:
         run: go test ./internal/push
       - name: Build test-only Docker image (amd64)
         run: |
-          docker build --platform linux/amd64 --label org.opencontainers.image.source=https://github.com/burris605-droid/cantinarr -t ghcr.io/burris605-droid/cantinarr:burris-announcements-v2-test .
+          docker build --platform linux/amd64 --label org.opencontainers.image.source=https://github.com/burris605-droid/cantinarr --label org.opencontainers.image.revision="$GITHUB_SHA" -t ghcr.io/burris605-droid/cantinarr:burris-announcements-v2-test -t "ghcr.io/burris605-droid/cantinarr:burris-v2-$GITHUB_SHA" .
       - name: Publish test image
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "ghcr.io/burris605-droid/cantinarr:burris-v2-$GITHUB_SHA"
           docker push ghcr.io/burris605-droid/cantinarr:burris-announcements-v2-test
           docker logout ghcr.io
