@@ -41,6 +41,7 @@ import '../../radarr/logic/radarr_movies_provider.dart';
 import '../../request/logic/pending_approvals_provider.dart';
 import '../../settings/logic/plex_invites_provider.dart';
 import '../../settings/logic/setup_status_provider.dart';
+import '../../settings/ui/announcement_navigation.dart';
 import '../../sonarr/data/sonarr_api_service.dart';
 import '../../sonarr/logic/sonarr_series_provider.dart';
 import '../../discover/logic/book_discovery_provider.dart';
@@ -1555,11 +1556,12 @@ class _AppShellState extends ConsumerState<AppShell>
           if (kIsWeb)
             _DrawerItem(
               icon: Icons.mail_outline,
-              title: 'Announcement inbox',
+              title: isAdmin ? 'Announcements' : 'Announcement inbox',
+              badgeCount: ref.watch(announcementUnreadProvider).valueOrNull ?? 0,
               semanticsIdentifier: 'nav-action-announcement-inbox',
               onTap: () {
                 if (isOverlay) Navigator.pop(context);
-                _pushMenuRoute(context, '/settings/announcement-inbox');
+                _pushMenuRoute(context, '/announcements');
               },
             ),
           _DrawerItem(
