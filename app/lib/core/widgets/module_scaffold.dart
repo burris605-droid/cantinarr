@@ -13,6 +13,8 @@ class ModuleScaffold extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTabChanged;
   final Widget child;
+  final VoidCallback? onAnnouncements;
+  final int announcementUnread;
 
   const ModuleScaffold({
     super.key,
@@ -21,6 +23,8 @@ class ModuleScaffold extends StatelessWidget {
     required this.currentIndex,
     required this.onTabChanged,
     required this.child,
+    this.onAnnouncements,
+    this.announcementUnread=0,
   });
 
   @override
@@ -30,7 +34,7 @@ class ModuleScaffold extends StatelessWidget {
       appBar: appBar,
       body: child,
       bottomNavigationBar: (AppBreakpoints.isDesktop(context) ||
-              pages.length < 2)
+              (pages.length < 2 && onAnnouncements == null))
           ? null
           : SafeArea(
               top: false,
@@ -51,12 +55,13 @@ class ModuleScaffold extends StatelessWidget {
                       color: AppTheme.signal.withValues(alpha: 0.035),
                       blurRadius: 20,
                     ),
+                    if(onAnnouncements!=null) BottomNavigationBarItem(icon:Badge(isLabelVisible:announcementUnread>0,label:Text('$announcementUnread'),child:const Icon(Icons.campaign_outlined)),label:'Announcements'),
                   ],
                 ),
                 child: BottomNavigationBar(
                   backgroundColor: Colors.transparent,
                   currentIndex: currentIndex.clamp(0, pages.length - 1),
-                  onTap: onTabChanged,
+                  onTap: (index) {if(index==pages.length && onAnnouncements!=null){onAnnouncements!();}else{onTabChanged(index);}},
                   items: [
                     for (final page in pages)
                       BottomNavigationBarItem(
