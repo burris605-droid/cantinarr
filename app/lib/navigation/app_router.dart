@@ -93,6 +93,7 @@ import '../features/settings/ui/request_settings_screen.dart';
 import '../features/request/ui/tv_matches_screen.dart';
 import '../features/settings/ui/settings_screen.dart';
 import '../features/settings/ui/announcement_inbox_screen.dart';
+import '../features/settings/ui/announcement_navigation.dart';
 import '../features/settings/ui/listening_apps_screen.dart';
 import '../features/settings/ui/video_apps_screen.dart';
 import '../features/settings/ui/user_request_settings_screen.dart';
@@ -749,6 +750,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             redirect: (_, state) => _mediaDetailRedirect(state),
             builder: (context, state) =>
                 AppAmbientBackground(child: _mediaDetailChild(state)),
+          ),
+          GoRoute(
+            path: '/announcements',
+            builder: (_, __) => const AppAmbientBackground(child: AnnouncementNavigationScreen()),
           ),
           GoRoute(
             path: '/settings/announcement-inbox',
