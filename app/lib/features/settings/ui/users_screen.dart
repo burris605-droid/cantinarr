@@ -22,6 +22,7 @@ import '../data/credentials_service.dart';
 import '../data/request_settings_service.dart';
 import '../logic/plex_invites_provider.dart';
 import 'user_onboarding_status.dart';
+import 'announcements_screen.dart';
 
 /// Admin screen for managing user accounts: invite new users, change roles,
 /// remove users, and see who still has an outstanding connect-link invite.
@@ -810,6 +811,16 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                       icon: const Icon(Icons.person_add_outlined),
                       label: Text(context.l10n.settingsInviteUser),
                     ),
+                    if (ref.watch(authProvider).valueOrNull?.user?.role == 'admin')
+                      OutlinedButton.icon(
+                        onPressed: _isLoading || _users == null ? null : () {
+                          Navigator.of(context).push(MaterialPageRoute<void>(
+                            builder: (_) => AnnouncementsScreen(users: _users!),
+                          ));
+                        },
+                        icon: const Icon(Icons.campaign_outlined),
+                        label: const Text('Announcements'),
+                      ),
                   ],
                 ),
               ),
