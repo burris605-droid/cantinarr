@@ -54,6 +54,6 @@ class _AnnouncementInboxScreenState extends ConsumerState<AnnouncementInboxScree
           TextButton(onPressed:busy?null:()=>action('${m['id']}',delete:true),child:const Text('Delete')),
         ]),
       ]))),
-    ]))))));
+    ])))));
   }
 }
