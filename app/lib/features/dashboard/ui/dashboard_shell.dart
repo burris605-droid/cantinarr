@@ -1,5 +1,7 @@
 import 'package:cantinarr/l10n/l10n.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../../settings/ui/announcement_navigation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/widgets/module_scaffold.dart';
@@ -32,6 +34,8 @@ class DashboardShell extends ConsumerWidget {
     return CatalogWarmup(
         child: ModuleScaffold(
       pages: access.pages,
+      onAnnouncements:kIsWeb?()=>context.push('/announcements'):null,
+      announcementUnread:kIsWeb?(ref.watch(announcementUnreadProvider).valueOrNull??0):0,
       currentIndex: indices.indexOf(currentIndex).clamp(0, indices.length - 1),
       onTabChanged: (index) => onTabChanged(indices[index]),
       child: Column(children: [
