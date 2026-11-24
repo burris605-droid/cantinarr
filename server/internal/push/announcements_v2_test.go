@@ -51,3 +51,18 @@ func TestV2ScheduleValidation(t *testing.T) {
 	a.RunAt=now+60;a.RepeatDays=2
 	if a.validate(now){t.Fatal("unsupported recurrence accepted")}
 }
+
+func TestV2WelcomeDoesNotTargetExistingAccounts(t *testing.T) {
+	db,err:=dbOpen(t);if err!=nil{t.Fatal(err)}
+	mustExec(t,db,"INSERT INTO users (id,username,password_hash,role) VALUES (1,'admin','','admin'),(2,'existing','','user')")
+	h:=NewHandler(db,nil,nil)
+	payload:="{\"retention\":true,\"welcome\":true,\"title\":\"Welcome\",\"body\":\"Enjoy\"}"
+	r:=httptest.NewRequest(http.MethodPut,"/",strings.NewReader(payload))
+	r=r.WithContext(context.WithValue(r.Context(),auth.ClaimsKey,&auth.Claims{UserID:1,Role:"admin"}))
+	w:=httptest.NewRecorder();h.V2Options(w,r)
+	if w.Code!=200{t.Fatalf("options %d %s",w.Code,w.Body.String())}
+	var n int
+	if err=db.QueryRow("SELECT COUNT(*) FROM burris_v2_welcomed").Scan(&n);err!=nil||n!=2{t.Fatalf("existing users not excluded: %d %v",n,err)}
+	h.v2Maintenance(context.Background())
+	if err=db.QueryRow("SELECT COUNT(*) FROM burris_v2_jobs").Scan(&n);err!=nil||n!=0{t.Fatalf("unexpected retroactive welcome: %d %v",n,err)}
+}
