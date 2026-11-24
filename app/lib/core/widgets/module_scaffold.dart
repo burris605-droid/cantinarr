@@ -55,7 +55,6 @@ class ModuleScaffold extends StatelessWidget {
                       color: AppTheme.signal.withValues(alpha: 0.035),
                       blurRadius: 20,
                     ),
-                    if(onAnnouncements!=null) BottomNavigationBarItem(icon:Badge(isLabelVisible:announcementUnread>0,label:Text('$announcementUnread'),child:const Icon(Icons.campaign_outlined)),label:'Announcements'),
                   ],
                 ),
                 child: BottomNavigationBar(
@@ -81,6 +80,7 @@ class ModuleScaffold extends StatelessWidget {
                         ),
                         label: localizeShellLabel(context, page.label),
                       ),
+                    if(onAnnouncements!=null) BottomNavigationBarItem(icon:Badge(isLabelVisible:announcementUnread>0,label:Text('$announcementUnread'),child:const Icon(Icons.campaign_outlined)),label:'Announcements'),
                   ],
                 ),
               ),
