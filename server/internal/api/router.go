@@ -263,6 +263,8 @@ func NewRouter(
 				r.Use(auth.RequirePermission(auth.PermissionAdmin))
 				r.Get("/", pushHandler.V2List)
 				r.Get("/recipients", pushHandler.V2Recipients)
+				r.Get("/options", pushHandler.V2Options)
+				r.Put("/options", pushHandler.V2Options)
 				r.With(announcementLimiter.Middleware).Post("/", pushHandler.V2Save)
 				r.With(announcementLimiter.Middleware).Put("/{id}", pushHandler.V2Save)
 				r.Delete("/history", pushHandler.V2Clear)
