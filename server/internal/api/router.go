@@ -256,6 +256,10 @@ func NewRouter(
 			r.Use(authService.AuthMiddleware)
 			r.With(auth.RequirePermission(auth.PermissionAdmin)).Get("/push-notifications", pushHandler.ServerPolicy)
 			r.With(auth.RequirePermission(auth.PermissionAdmin)).Put("/push-notifications", pushHandler.ServerPolicy)
+			// Burris Edition: explicit administrator-only announcements.
+			announcementLimiter := auth.NewRateLimiter(3, time.Minute)
+			r.With(auth.RequirePermission(auth.PermissionAdmin)).Get("/announcements", pushHandler.AnnouncementHistory)
+			r.With(auth.RequirePermission(auth.PermissionAdmin), announcementLimiter.Middleware).Post("/announcements", pushHandler.SendAnnouncement)
 			discordHandler := discordNotifications.Handler
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Get("/discord-notifications", discordHandler)
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Put("/discord-notifications", discordHandler)
