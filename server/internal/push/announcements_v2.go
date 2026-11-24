@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,7 +39,7 @@ func (a *announcementV2Request) validate(now int64) bool {
 	} else if !a.announcementRequest.valid() {return false}
 	if a.Priority=="" {a.Priority="general"}
 	switch a.Priority {case "general","important","urgent","maintenance":default:return false}
-	if len(a.Key)<16 || len(a.Key)>128 || strings.ContainsAny(a.Key," \t\r\n/") {return false}
+	if len(a.Key)<16 || len(a.Key)>128 {return false}; for _,r:=range a.Key {if !(r>='a'&&r<='z'||r>='A'&&r<='Z'||r>='0'&&r<='9'||r=='-'||r=='_'){return false}}
 	if a.RepeatDays!=0 && a.RepeatDays!=1 && a.RepeatDays!=7 && a.RepeatDays!=30 {return false}
 	switch a.Mode {
 	case "now":
@@ -213,7 +212,7 @@ func (h *Handler) V2Inbox(w http.ResponseWriter,r *http.Request) {
 		if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox update failed"});return}
 		writeJSON(w,200,map[string]bool{"success":true});return
 	}
-	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.title,i.body,i.created,i.read_at,COALESCE(m.pinned,0),(SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1),COALESCE(x.priority,\'general\'),COALESCE(x.require_ack,0) AND (SELECT acknowledgments FROM burris_v2_interaction_policy WHERE id=1),EXISTS(SELECT 1 FROM burris_v2_ack a WHERE a.inbox_id=i.id),(SELECT replies FROM burris_v2_interaction_policy WHERE id=1),(SELECT COUNT(*) FROM burris_v2_replies q WHERE q.inbox_id=i.id) FROM burris_v2_inbox i LEFT JOIN burris_v2_inbox_meta m ON m.job_id=i.job_id LEFT JOIN burris_v2_interaction_meta x ON x.job_id=i.job_id WHERE i.user_id=? AND (COALESCE(m.expires,0)=0 OR m.expires>?) ORDER BY COALESCE(m.pinned,0) DESC,i.created DESC,i.id DESC LIMIT 500",claims.UserID,time.Now().Unix())
+	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.title,i.body,i.created,i.read_at,COALESCE(m.pinned,0),(SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1),COALESCE(x.priority,'general'),COALESCE(x.require_ack,0) AND (SELECT acknowledgments FROM burris_v2_interaction_policy WHERE id=1),EXISTS(SELECT 1 FROM burris_v2_ack a WHERE a.inbox_id=i.id),(SELECT replies FROM burris_v2_interaction_policy WHERE id=1),(SELECT COUNT(*) FROM burris_v2_replies q WHERE q.inbox_id=i.id) FROM burris_v2_inbox i LEFT JOIN burris_v2_inbox_meta m ON m.job_id=i.job_id LEFT JOIN burris_v2_interaction_meta x ON x.job_id=i.job_id WHERE i.user_id=? AND (COALESCE(m.expires,0)=0 OR m.expires>?) ORDER BY COALESCE(m.pinned,0) DESC,i.created DESC,i.id DESC LIMIT 500",claims.UserID,time.Now().Unix())
 	if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox unavailable"});return}
 	defer rows.Close()
 	out:=[]map[string]any{}
