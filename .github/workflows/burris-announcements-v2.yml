@@ -1,0 +1,35 @@
+name: Burris announcement V2 test image
+on:
+  push:
+    branches: ['dev/burris-announcements-v2']
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: burris-announcement-v2-build
+  cancel-in-progress: true
+jobs:
+  build:
+    if: github.repository == 'burris605-droid/cantinarr' && github.ref == 'refs/heads/dev/burris-announcements-v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Test push package
+        working-directory: server
+        run: go test ./internal/push
+      - name: Build test-only Docker image (amd64)
+        run: |
+          docker build --platform linux/amd64 --label org.opencontainers.image.source=https://github.com/burris605-droid/cantinarr -t ghcr.io/burris605-droid/cantinarr:burris-announcements-v2-test .
+      - name: Publish test image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push ghcr.io/burris605-droid/cantinarr:burris-announcements-v2-test
+          docker logout ghcr.io
