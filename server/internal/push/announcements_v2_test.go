@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/windoze95/cantinarr-server/internal/auth"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestV2QueueAndInboxIsolation(t *testing.T) {
@@ -65,4 +66,35 @@ func TestV2WelcomeDoesNotTargetExistingAccounts(t *testing.T) {
 	if err=db.QueryRow("SELECT COUNT(*) FROM burris_v2_welcomed").Scan(&n);err!=nil||n!=2{t.Fatalf("existing users not excluded: %d %v",n,err)}
 	h.v2Maintenance(context.Background())
 	if err=db.QueryRow("SELECT COUNT(*) FROM burris_v2_jobs").Scan(&n);err!=nil||n!=0{t.Fatalf("unexpected retroactive welcome: %d %v",n,err)}
+}
+
+
+func TestV2InboxInteractionAuthorization(t *testing.T) {
+	db,err:=dbOpen(t);if err!=nil{t.Fatal(err)}
+	mustExec(t,db,"INSERT INTO users (id,username,password_hash,role) VALUES (1,'admin','','admin'),(2,'alice','','user'),(3,'bob','','user')")
+	h:=NewHandler(db,nil,nil)
+	ctx:=context.Background()
+	if err=h.v2Schema(ctx);err!=nil{t.Fatal(err)}
+	mustExec(t,db,"INSERT INTO burris_v2_inbox(id,job_id,user_id,title,body,created) VALUES(21,'job',2,'Test','Private',100),(22,'job',3,'Test','Private',100)")
+	mustExec(t,db,"INSERT INTO burris_v2_inbox_meta(job_id,pinned) VALUES('job',1)")
+	mustExec(t,db,"INSERT INTO burris_v2_interaction_meta(job_id,priority,require_ack) VALUES('job','urgent',1)")
+	call:=func(handler http.HandlerFunc,method,id,body string,uid int64,role string)*httptest.ResponseRecorder{
+		r:=httptest.NewRequest(method,"/",strings.NewReader(body))
+		rc:=chi.NewRouteContext();rc.URLParams.Add("id",id)
+		r=r.WithContext(context.WithValue(context.WithValue(r.Context(),chi.RouteCtxKey,rc),auth.ClaimsKey,&auth.Claims{UserID:uid,Role:role}))
+		w:=httptest.NewRecorder();handler(w,r);return w
+	}
+	if w:=call(h.V2Replies,"POST","21","{\"body\":\"not mine\"}",3,"user");w.Code!=409{t.Fatalf("cross-user reply: %d",w.Code)}
+	if w:=call(h.V2Replies,"POST","21","{\"body\":\"private response\"}",2,"user");w.Code!=200{t.Fatalf("own reply: %d %s",w.Code,w.Body.String())}
+	if w:=call(h.V2Replies,"GET","21","",3,"user");w.Code!=200||strings.Contains(w.Body.String(),"private response"){t.Fatal("cross-user reply disclosed")}
+	if w:=call(h.V2AdminReplies,"GET","21","",3,"user");w.Code!=403{t.Fatal("admin route not restricted")}
+	if w:=call(h.V2AdminReplies,"POST","21","{\"body\":\"admin response\"}",1,"admin");w.Code!=200{t.Fatalf("admin reply: %d",w.Code)}
+	if w:=call(h.V2Replies,"GET","21","",2,"user");!strings.Contains(w.Body.String(),"admin response"){t.Fatal("admin reply missing")}
+	if w:=call(h.V2Acknowledge,"POST","21","",3,"user");w.Code!=404{t.Fatal("cross-user acknowledgment accepted")}
+	if w:=call(h.V2Acknowledge,"POST","21","",2,"user");w.Code!=200{t.Fatalf("own acknowledgment: %d",w.Code)}
+	if w:=call(h.V2Inbox,"DELETE","21","",2,"user");w.Code!=409{t.Fatal("pinned message deleted")}
+	if w:=call(h.V2InboxRecall,"DELETE","job","",2,"user");w.Code!=403{t.Fatal("user recall accepted")}
+	if w:=call(h.V2InboxRecall,"DELETE","job","",1,"admin");w.Code!=200{t.Fatalf("admin recall: %d",w.Code)}
+	var n int
+	if err=db.QueryRow("SELECT COUNT(*) FROM burris_v2_inbox").Scan(&n);err!=nil||n!=0{t.Fatalf("recall did not remove copies: %d %v",n,err)}
 }
