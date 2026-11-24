@@ -56,6 +56,9 @@ func (h *Handler) v2Schema(ctx context.Context) error {
 		"CREATE INDEX IF NOT EXISTS burris_v2_due ON burris_v2_jobs(status,run_at)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, read_at INTEGER NOT NULL DEFAULT 0, UNIQUE(job_id,user_id))",
 		"CREATE INDEX IF NOT EXISTS burris_v2_inbox_user ON burris_v2_inbox(user_id,created)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_inbox_meta (job_id TEXT PRIMARY KEY, pinned INTEGER NOT NULL DEFAULT 0, expires INTEGER NOT NULL DEFAULT 0)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_inbox_policy (id INTEGER PRIMARY KEY CHECK(id=1), allow_delete INTEGER NOT NULL DEFAULT 1)",
+		"INSERT OR IGNORE INTO burris_v2_inbox_policy(id) VALUES(1)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_options (id INTEGER PRIMARY KEY CHECK(id=1), retention INTEGER NOT NULL DEFAULT 0, welcome INTEGER NOT NULL DEFAULT 0, sender INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT 'Welcome aboard!', body TEXT NOT NULL DEFAULT 'Welcome to our media server. Happy watching!')",
 		"INSERT OR IGNORE INTO burris_v2_options(id) VALUES(1)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_welcomed (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE)",
@@ -189,17 +192,20 @@ func (h *Handler) V2Inbox(w http.ResponseWriter,r *http.Request) {
 	if r.Method!=http.MethodGet {
 		id:=chi.URLParam(r,"id")
 		var err error
-		if r.Method==http.MethodDelete {_,err=h.db.ExecContext(r.Context(),"DELETE FROM burris_v2_inbox WHERE id=? AND user_id=?",id,claims.UserID)
+		if r.Method==http.MethodDelete {
+			var result sql.Result
+			result,err=h.db.ExecContext(r.Context(),"DELETE FROM burris_v2_inbox WHERE id=? AND user_id=? AND (SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1)=1 AND NOT EXISTS(SELECT 1 FROM burris_v2_inbox_meta m WHERE m.job_id=burris_v2_inbox.job_id AND m.pinned=1)",id,claims.UserID)
+			if err==nil {n,_:=result.RowsAffected();if n!=1 {writeJSON(w,409,map[string]string{"error":"Message cannot be deleted"});return}}
 		} else if id=="all" {_,err=h.db.ExecContext(r.Context(),"UPDATE burris_v2_inbox SET read_at=? WHERE user_id=? AND read_at=0",time.Now().Unix(),claims.UserID)
 		} else {_,err=h.db.ExecContext(r.Context(),"UPDATE burris_v2_inbox SET read_at=? WHERE id=? AND user_id=? AND read_at=0",time.Now().Unix(),id,claims.UserID)}
 		if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox update failed"});return}
 		writeJSON(w,200,map[string]bool{"success":true});return
 	}
-	rows,err:=h.db.QueryContext(r.Context(),"SELECT id,title,body,created,read_at FROM burris_v2_inbox WHERE user_id=? ORDER BY created DESC,id DESC LIMIT 500",claims.UserID)
+	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.title,i.body,i.created,i.read_at,COALESCE(m.pinned,0),(SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1) FROM burris_v2_inbox i LEFT JOIN burris_v2_inbox_meta m ON m.job_id=i.job_id WHERE i.user_id=? AND (COALESCE(m.expires,0)=0 OR m.expires>?) ORDER BY COALESCE(m.pinned,0) DESC,i.created DESC,i.id DESC LIMIT 500",claims.UserID,time.Now().Unix())
 	if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox unavailable"});return}
 	defer rows.Close()
 	out:=[]map[string]any{}
-	for rows.Next(){var id,created,read int64;var title,body string;if err=rows.Scan(&id,&title,&body,&created,&read);err!=nil{break};out=append(out,map[string]any{"id":id,"title":title,"body":body,"created":created,"read":read>0})}
+	for rows.Next(){var id,created,read int64;var title,body string;var pinned,allowDelete bool;if err=rows.Scan(&id,&title,&body,&created,&read,&pinned,&allowDelete);err!=nil{break};out=append(out,map[string]any{"id":id,"title":title,"body":body,"created":created,"read":read>0,"pinned":pinned,"can_delete":allowDelete&&!pinned})}
 	if err!=nil || rows.Err()!=nil {writeJSON(w,500,map[string]string{"error":"inbox unavailable"});return}
 	writeJSON(w,200,out)
 }
@@ -345,6 +351,7 @@ func (h *Handler) v2Maintenance(ctx context.Context) {
 	var o v2Options;var sender int64
 	if err:=h.db.QueryRowContext(ctx,"SELECT retention,welcome,sender,title,body FROM burris_v2_options WHERE id=1").Scan(&o.Retention,&o.Welcome,&sender,&o.Title,&o.Body);err!=nil{return}
 	now:=time.Now().Unix()
+	if _,err:=h.db.ExecContext(ctx,"DELETE FROM burris_v2_inbox WHERE job_id IN (SELECT job_id FROM burris_v2_inbox_meta WHERE expires>0 AND expires<=?)",now);err!=nil {h.logger.Error("inbox expiry","err",err)}
 	if o.Retention {
 		if _,err:=h.db.ExecContext(ctx,"DELETE FROM burris_v2_jobs WHERE status IN ('completed','unknown','failed','inbox_only') AND created<?",now-30*86400);err!=nil {h.logger.Error("announcement retention","err",err)}
 	}
