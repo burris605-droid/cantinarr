@@ -1552,6 +1552,16 @@ class _AppShellState extends ConsumerState<AppShell>
                 _pushMenuRoute(context, '/media-servers');
               },
             ),
+          if (kIsWeb)
+            _DrawerItem(
+              icon: Icons.mail_outline,
+              title: 'Announcement inbox',
+              semanticsIdentifier: 'nav-action-announcement-inbox',
+              onTap: () {
+                if (isOverlay) Navigator.pop(context);
+                _pushMenuRoute(context, '/settings/announcement-inbox');
+              },
+            ),
           _DrawerItem(
             icon: Icons.settings,
             title: context.l10n.shellSettings,
