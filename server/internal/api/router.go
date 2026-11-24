@@ -259,6 +259,15 @@ func NewRouter(
 			// Burris Edition: explicit administrator-only announcements.
 			announcementLimiter := auth.NewRateLimiter(3, time.Minute)
 			r.With(auth.RequirePermission(auth.PermissionAdmin)).Get("/announcements", pushHandler.AnnouncementHistory)
+			r.Route("/announcements-v2", func(r chi.Router) {
+				r.Use(auth.RequirePermission(auth.PermissionAdmin))
+				r.Get("/", pushHandler.V2List)
+				r.Get("/recipients", pushHandler.V2Recipients)
+				r.With(announcementLimiter.Middleware).Post("/", pushHandler.V2Save)
+				r.With(announcementLimiter.Middleware).Put("/{id}", pushHandler.V2Save)
+				r.Delete("/history", pushHandler.V2Clear)
+				r.Delete("/{id}", pushHandler.V2Delete)
+			})
 			r.With(auth.RequirePermission(auth.PermissionAdmin), announcementLimiter.Middleware).Post("/announcements", pushHandler.SendAnnouncement)
 			discordHandler := discordNotifications.Handler
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Get("/discord-notifications", discordHandler)
@@ -532,6 +541,9 @@ func NewRouter(
 			r.Get("/notifications/preferences", pushHandler.GetPreferences)
 			r.Put("/notifications/preferences", pushHandler.UpdatePreferences)
 			r.Post("/notifications/test", pushHandler.TestPush)
+			r.Get("/announcements/inbox", pushHandler.V2Inbox)
+			r.Put("/announcements/inbox/{id}", pushHandler.V2Inbox)
+			r.Delete("/announcements/inbox/{id}", pushHandler.V2Inbox)
 		})
 
 		// Request routes (authenticated)
