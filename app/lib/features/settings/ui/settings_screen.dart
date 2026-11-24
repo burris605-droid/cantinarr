@@ -471,6 +471,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: _SectionHeader(title: context.l10n.settingsNotifications),
             ),
             _SettingsTile(
+              icon: Icons.mail_outline,
+              title: 'Announcement inbox',
+              subtitle: 'Read messages from your server administrator',
+              onTap: () => context.push('/settings/announcement-inbox'),
+            ),
+            _SettingsTile(
               icon: Icons.notifications_outlined,
               title: context.l10n.settingsPushNotifications,
               subtitle: context.l10n.settingsPushNotificationsDescription,
