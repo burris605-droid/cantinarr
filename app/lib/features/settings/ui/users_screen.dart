@@ -3,6 +3,8 @@ import '../../notifications/ui/notification_labels.dart';
 import '../../media_access/ui/media_access_labels.dart';
 import 'package:cantinarr/l10n/l10n.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'announcement_link.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -1232,7 +1234,10 @@ class _UserTile extends StatelessWidget {
           ],
         ),
       ),
-      trailing: _buildMenu(context),
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (kIsWeb) IconButton(tooltip: 'Copy inbox link for ${user.username}', icon: const Icon(Icons.link), onPressed: () => copyAnnouncementInboxLink(context, user.username)),
+        _buildMenu(context),
+      ]),
     );
   }
 
