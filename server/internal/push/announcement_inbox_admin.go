@@ -37,11 +37,11 @@ func (h *Handler) V2InboxAdmin(w http.ResponseWriter,r *http.Request) {
 func (h *Handler) V2InboxDetails(w http.ResponseWriter,r *http.Request) {
 	if !h.inboxAdmin(w,r){return}
 	id:=chi.URLParam(r,"id")
-	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.user_id,u.username,i.read_at FROM burris_v2_inbox i JOIN users u ON u.id=i.user_id WHERE i.job_id=? ORDER BY u.username",id)
+	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.user_id,u.username,i.read_at,COALESCE(a.acknowledged,0),(SELECT COUNT(*) FROM burris_v2_replies q WHERE q.inbox_id=i.id) FROM burris_v2_inbox i JOIN users u ON u.id=i.user_id LEFT JOIN burris_v2_ack a ON a.inbox_id=i.id WHERE i.job_id=? ORDER BY u.username",id)
 	if err!=nil {writeJSON(w,500,map[string]string{"error":"read statistics unavailable"});return}
 	defer rows.Close()
 	out:=[]map[string]any{}
-	for rows.Next(){var uid,read int64;var username string;if err=rows.Scan(&uid,&username,&read);err!=nil{break};out=append(out,map[string]any{"user_id":uid,"username":username,"read_at":read})}
+	for rows.Next(){var inboxID,uid,read,ack,count int64;var username string;if err=rows.Scan(&inboxID,&uid,&username,&read,&ack,&count);err!=nil{break};out=append(out,map[string]any{"inbox_id":inboxID,"user_id":uid,"username":username,"read_at":read,"acknowledged_at":ack,"reply_count":count})}
 	if err!=nil||rows.Err()!=nil {writeJSON(w,500,map[string]string{"error":"read statistics unavailable"});return}
 	writeJSON(w,200,out)
 }
