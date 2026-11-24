@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/backend_client.dart';
 import '../../auth/data/auth_service.dart';
 import 'inbox_management_screen.dart';
+import 'announcement_link.dart';
+import 'package:go_router/go_router.dart';
 
 class AnnouncementsScreen extends ConsumerStatefulWidget {
   const AnnouncementsScreen({super.key, required this.users});
@@ -182,6 +184,7 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
         Text('BURRIS EDITION · V2',style:theme.textTheme.labelLarge?.copyWith(color:theme.colorScheme.primary)),
         Text('Broadcast control',style:theme.textTheme.headlineMedium),
         FilledButton.tonalIcon(onPressed:busy?null:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>InboxManagementScreen(users:widget.users))),icon:const Icon(Icons.inbox_outlined),label:const Text('Inbox management')),
+        Wrap(spacing:8,children:[TextButton.icon(onPressed:()=>context.push('/settings/announcement-inbox'),icon:const Icon(Icons.mail_outline),label:const Text('My inbox')),TextButton.icon(onPressed:()=>copyAnnouncementInboxLink(context,'all users'),icon:const Icon(Icons.link),label:const Text('Copy inbox link'))]),
         Wrap(spacing:8,children:[Chip(label:Text('$eligible push-ready users')),Chip(label:Text('$queued queued')),Chip(label:Text('$done completed'))]),
         if(error!=null)Text(error!,style:TextStyle(color:theme.colorScheme.error)),
         const Text('Official mobile alerts open Cantinarr. Full messages are also available in the web inbox.'),
