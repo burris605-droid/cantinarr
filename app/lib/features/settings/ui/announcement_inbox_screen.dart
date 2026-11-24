@@ -46,12 +46,12 @@ class _AnnouncementInboxScreenState extends ConsumerState<AnnouncementInboxScree
       if(loading)const LinearProgressIndicator(),
       if(!loading&&messages.isEmpty&&error==null)const Padding(padding:EdgeInsets.all(32),child:Center(child:Text('No announcements yet.'))),
       for(final m in messages)Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        Row(children:[Icon(m['read']==true?Icons.mark_email_read_outlined:Icons.mark_email_unread_outlined),const SizedBox(width:8),Expanded(child:Text('${m['title']}',style:Theme.of(context).textTheme.titleMedium)),if(m['read']!=true)const Chip(label:Text('New'))]),
+        Row(children:[Icon(m['read']==true?Icons.mark_email_read_outlined:Icons.mark_email_unread_outlined),const SizedBox(width:8),Expanded(child:Text('${m['title']}',style:Theme.of(context).textTheme.titleMedium)),if(m['pinned']==true)const Icon(Icons.push_pin,size:18),if(m['read']!=true)const Chip(label:Text('New'))]),
         const SizedBox(height:8),SelectableText('${m['body']}'),const SizedBox(height:8),
         Text(DateTime.fromMillisecondsSinceEpoch((m['created'] as num).toInt()*1000,isUtc:true).toLocal().toString().split('.').first),
         Wrap(children:[
           if(m['read']!=true)TextButton(onPressed:busy?null:()=>action('${m['id']}'),child:const Text('Mark read')),
-          TextButton(onPressed:busy?null:()=>action('${m['id']}',delete:true),child:const Text('Delete')),
+          if(m['can_delete']==true)TextButton(onPressed:busy?null:()=>action('${m['id']}',delete:true),child:const Text('Delete')),
         ]),
       ]))),
     ])))));
