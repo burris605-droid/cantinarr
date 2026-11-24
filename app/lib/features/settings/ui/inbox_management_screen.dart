@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'announcement_thread_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/backend_client.dart';
 import '../../auth/data/auth_service.dart';
@@ -12,7 +13,7 @@ class InboxManagementScreen extends ConsumerStatefulWidget {
 class _InboxManagementState extends ConsumerState<InboxManagementScreen> {
   static const base='/api/admin/announcements-v2/inbox';
   List<Map<String,dynamic>> items=[];
-  bool loading=true,busy=false,allowDelete=true;
+  bool loading=true,busy=false,allowDelete=true,allowReplies=true,allowAck=true;
   String? error;
   final search=TextEditingController();
   @override
@@ -25,7 +26,8 @@ class _InboxManagementState extends ConsumerState<InboxManagementScreen> {
       final api=ref.read(backendClientProvider);
       final list=maps((await api.get(base)).data);
       final policy=(await api.get('$base/policy')).data as Map;
-      if(mounted)setState((){items=list;allowDelete=policy['allow_delete']==true;loading=false;error=null;});
+      final interaction=(await api.get('$base/interactions')).data as Map;
+      if(mounted)setState((){items=list;allowDelete=policy['allow_delete']==true;allowReplies=interaction['replies']==true;allowAck=interaction['acknowledgments']==true;loading=false;error=null;});
     }catch(_){if(mounted)setState((){loading=false;error='Unable to load inbox management.';});}
   }
   Future<void> run(Future<void> Function() fn) async {
@@ -66,7 +68,11 @@ class _InboxManagementState extends ConsumerState<InboxManagementScreen> {
       if(!mounted)return;
       await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:Text('${item['title']} · Read status'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
         const Text('Read means marked read in the web inbox, not phone delivery. Deleted copies are excluded.'),
-        for(final u in list)ListTile(title:Text('${u['username']}'),subtitle:Text((u['read_at'] as num)>0?'Read: ${date(u['read_at'])}':'Unread'),trailing:IconButton(tooltip:'Remove this user’s copy',icon:const Icon(Icons.delete_outline),onPressed:()async{
+        for(final u in list)ListTile(title:Text('${u['username']}'),subtitle:Text('${(u['read_at'] as num)>0?'Read: ${date(u['read_at'])}':'Unread'}\n${(u['acknowledged_at'] as num)>0?'Acknowledged':'Not acknowledged'} · ${u['reply_count']} replies'),onTap:()async{
+          await Navigator.of(ctx).push(MaterialPageRoute<void>(builder:(_)=>AnnouncementThreadScreen(endpoint:'/api/admin/announcements-v2/threads/${u['inbox_id']}',heading:'${u['username']} · ${item['title']}',admin:true,canReply:allowReplies)));
+          if(ctx.mounted)Navigator.pop(ctx);
+          if(mounted)await load();
+        },trailing:IconButton(tooltip:'Remove this user’s copy',icon:const Icon(Icons.delete_outline),onPressed:()async{
           if(!await confirm('Remove user copy?','Remove this message from ${u['username']} only?'))return;
           if(!ctx.mounted||!mounted)return;
           Navigator.pop(ctx);
@@ -95,6 +101,9 @@ class _InboxManagementState extends ConsumerState<InboxManagementScreen> {
         Text('PUBLISHED ANNOUNCEMENTS',style:Theme.of(context).textTheme.labelLarge),
         const Text('Manage inbox copies independently of push delivery history.'),
         SwitchListTile(title:const Text('Allow users to delete their messages'),subtitle:const Text('Pinned messages are always protected.'),value:allowDelete,onChanged:busy||loading?null:(v)=>run(()async{await ref.read(backendClientProvider).put('$base/policy',data:{'allow_delete':v});})),
+        SwitchListTile(title:const Text('Enable private replies'),value:allowReplies,onChanged:busy||loading?null:(v)=>run(()async{await ref.read(backendClientProvider).put('$base/interactions',data:{'replies':v,'acknowledgments':allowAck});})),
+        SwitchListTile(title:const Text('Enable acknowledgments'),value:allowAck,onChanged:busy||loading?null:(v)=>run(()async{await ref.read(backendClientProvider).put('$base/interactions',data:{'replies':allowReplies,'acknowledgments':v});})),
+        const Text('Open Read status & replies, then tap a recipient to view their private conversation.'),
         OutlinedButton.icon(onPressed:busy?null:clear,icon:const Icon(Icons.delete_sweep),label:const Text('Clear user inboxes')),
         TextField(controller:search,decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Search published messages'),onChanged:(_)=>setState((){})),
         if(error!=null)Text(error!),
@@ -106,7 +115,7 @@ class _InboxManagementState extends ConsumerState<InboxManagementScreen> {
           Text('${i['read']} of ${i['count']} remaining copies read · Expires: ${date(i['expires'])}'),
           Wrap(children:[
             TextButton.icon(onPressed:busy?null:()=>edit(i),icon:const Icon(Icons.edit_outlined),label:const Text('Edit / pin / expire')),
-            TextButton.icon(onPressed:busy?null:()=>details(i),icon:const Icon(Icons.people_outline),label:const Text('Read status')),
+            TextButton.icon(onPressed:busy?null:()=>details(i),icon:const Icon(Icons.people_outline),label:const Text('Read status & replies')),
             TextButton.icon(onPressed:busy?null:()async{if(await confirm('Recall announcement?','Remove all remaining inbox copies? Delivered phone alerts cannot be recalled.')&&mounted)await run(()async{await ref.read(backendClientProvider).delete('$base/${i['id']}');});},icon:const Icon(Icons.undo),label:const Text('Recall')),
           ]),
         ]))),
