@@ -24,6 +24,10 @@ type announcementV2Request struct {
 	Mode string `json:"mode"`
 	RunAt int64 `json:"run_at"`
 	RepeatDays int `json:"repeat_days"`
+	Priority string `json:"priority"`
+	Pinned bool `json:"pinned"`
+	RequireAck bool `json:"require_ack"`
+	InboxOnly bool `json:"inbox_only"`
 }
 
 func (a *announcementV2Request) validate(now int64) bool {
@@ -34,6 +38,8 @@ func (a *announcementV2Request) validate(now int64) bool {
 		a.Audience="admins"
 		if !ok {return false}
 	} else if !a.announcementRequest.valid() {return false}
+	if a.Priority=="" {a.Priority="general"}
+	switch a.Priority {case "general","important","urgent","maintenance":default:return false}
 	if len(a.Key)<16 || len(a.Key)>128 || strings.ContainsAny(a.Key," \t\r\n/") {return false}
 	if a.RepeatDays!=0 && a.RepeatDays!=1 && a.RepeatDays!=7 && a.RepeatDays!=30 {return false}
 	switch a.Mode {
@@ -59,6 +65,12 @@ func (h *Handler) v2Schema(ctx context.Context) error {
 		"CREATE TABLE IF NOT EXISTS burris_v2_inbox_meta (job_id TEXT PRIMARY KEY, pinned INTEGER NOT NULL DEFAULT 0, expires INTEGER NOT NULL DEFAULT 0)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_inbox_policy (id INTEGER PRIMARY KEY CHECK(id=1), allow_delete INTEGER NOT NULL DEFAULT 1)",
 		"INSERT OR IGNORE INTO burris_v2_inbox_policy(id) VALUES(1)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_interaction_policy (id INTEGER PRIMARY KEY CHECK(id=1), replies INTEGER NOT NULL DEFAULT 1, acknowledgments INTEGER NOT NULL DEFAULT 1)",
+		"INSERT OR IGNORE INTO burris_v2_interaction_policy(id) VALUES(1)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_interaction_meta (job_id TEXT PRIMARY KEY, priority TEXT NOT NULL DEFAULT 'general', require_ack INTEGER NOT NULL DEFAULT 0)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_ack (inbox_id INTEGER PRIMARY KEY REFERENCES burris_v2_inbox(id) ON DELETE CASCADE, acknowledged INTEGER NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS burris_v2_replies (id INTEGER PRIMARY KEY AUTOINCREMENT, inbox_id INTEGER NOT NULL REFERENCES burris_v2_inbox(id) ON DELETE CASCADE, from_admin INTEGER NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS burris_v2_reply_thread ON burris_v2_replies(inbox_id,id)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_options (id INTEGER PRIMARY KEY CHECK(id=1), retention INTEGER NOT NULL DEFAULT 0, welcome INTEGER NOT NULL DEFAULT 0, sender INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT 'Welcome aboard!', body TEXT NOT NULL DEFAULT 'Welcome to our media server. Happy watching!')",
 		"INSERT OR IGNORE INTO burris_v2_options(id) VALUES(1)",
 		"CREATE TABLE IF NOT EXISTS burris_v2_welcomed (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE)",
@@ -129,7 +141,7 @@ func (h *Handler) V2List(w http.ResponseWriter,r *http.Request) {
 		if err=rows.Scan(&id,&sender,&payload,&status,&runAt,&repeat,&created,&recipients,&skipped,&sent,&failed,&note);err!=nil {break}
 		var a announcementV2Request
 		if err=json.Unmarshal([]byte(payload),&a);err!=nil {break}
-		out=append(out,map[string]any{"id":id,"sender":sender,"title":a.Title,"body":a.Body,"audience":a.Audience,"user_ids":a.UserIDs,"status":status,"run_at":runAt,"repeat_days":repeat,"created":created,"recipients":recipients,"skipped":skipped,"sent":sent,"failed":failed,"note":note})
+		out=append(out,map[string]any{"id":id,"sender":sender,"title":a.Title,"body":a.Body,"audience":a.Audience,"user_ids":a.UserIDs,"status":status,"run_at":runAt,"repeat_days":repeat,"created":created,"recipients":recipients,"skipped":skipped,"sent":sent,"failed":failed,"note":note,"priority":a.Priority,"pinned":a.Pinned,"require_ack":a.RequireAck,"inbox_only":a.InboxOnly})
 	}
 	if err!=nil || rows.Err()!=nil {writeJSON(w,500,map[string]string{"error":"history unavailable"});return}
 	writeJSON(w,200,out)
@@ -194,18 +206,18 @@ func (h *Handler) V2Inbox(w http.ResponseWriter,r *http.Request) {
 		var err error
 		if r.Method==http.MethodDelete {
 			var result sql.Result
-			result,err=h.db.ExecContext(r.Context(),"DELETE FROM burris_v2_inbox WHERE id=? AND user_id=? AND (SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1)=1 AND NOT EXISTS(SELECT 1 FROM burris_v2_inbox_meta m WHERE m.job_id=burris_v2_inbox.job_id AND m.pinned=1)",id,claims.UserID)
+			result,err=h.db.ExecContext(r.Context(),"DELETE FROM burris_v2_inbox WHERE id=? AND user_id=? AND (SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1)=1 AND NOT EXISTS(SELECT 1 FROM burris_v2_inbox_meta m WHERE m.job_id=burris_v2_inbox.job_id AND m.pinned=1) AND NOT EXISTS(SELECT 1 FROM burris_v2_interaction_meta x WHERE x.job_id=burris_v2_inbox.job_id AND x.require_ack=1 AND (SELECT acknowledgments FROM burris_v2_interaction_policy WHERE id=1)=1 AND NOT EXISTS(SELECT 1 FROM burris_v2_ack a WHERE a.inbox_id=burris_v2_inbox.id))",id,claims.UserID)
 			if err==nil {n,_:=result.RowsAffected();if n!=1 {writeJSON(w,409,map[string]string{"error":"Message cannot be deleted"});return}}
 		} else if id=="all" {_,err=h.db.ExecContext(r.Context(),"UPDATE burris_v2_inbox SET read_at=? WHERE user_id=? AND read_at=0",time.Now().Unix(),claims.UserID)
 		} else {_,err=h.db.ExecContext(r.Context(),"UPDATE burris_v2_inbox SET read_at=? WHERE id=? AND user_id=? AND read_at=0",time.Now().Unix(),id,claims.UserID)}
 		if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox update failed"});return}
 		writeJSON(w,200,map[string]bool{"success":true});return
 	}
-	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.title,i.body,i.created,i.read_at,COALESCE(m.pinned,0),(SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1) FROM burris_v2_inbox i LEFT JOIN burris_v2_inbox_meta m ON m.job_id=i.job_id WHERE i.user_id=? AND (COALESCE(m.expires,0)=0 OR m.expires>?) ORDER BY COALESCE(m.pinned,0) DESC,i.created DESC,i.id DESC LIMIT 500",claims.UserID,time.Now().Unix())
+	rows,err:=h.db.QueryContext(r.Context(),"SELECT i.id,i.title,i.body,i.created,i.read_at,COALESCE(m.pinned,0),(SELECT allow_delete FROM burris_v2_inbox_policy WHERE id=1),COALESCE(x.priority,\'general\'),COALESCE(x.require_ack,0) AND (SELECT acknowledgments FROM burris_v2_interaction_policy WHERE id=1),EXISTS(SELECT 1 FROM burris_v2_ack a WHERE a.inbox_id=i.id),(SELECT replies FROM burris_v2_interaction_policy WHERE id=1),(SELECT COUNT(*) FROM burris_v2_replies q WHERE q.inbox_id=i.id) FROM burris_v2_inbox i LEFT JOIN burris_v2_inbox_meta m ON m.job_id=i.job_id LEFT JOIN burris_v2_interaction_meta x ON x.job_id=i.job_id WHERE i.user_id=? AND (COALESCE(m.expires,0)=0 OR m.expires>?) ORDER BY COALESCE(m.pinned,0) DESC,i.created DESC,i.id DESC LIMIT 500",claims.UserID,time.Now().Unix())
 	if err!=nil {writeJSON(w,500,map[string]string{"error":"inbox unavailable"});return}
 	defer rows.Close()
 	out:=[]map[string]any{}
-	for rows.Next(){var id,created,read int64;var title,body string;var pinned,allowDelete bool;if err=rows.Scan(&id,&title,&body,&created,&read,&pinned,&allowDelete);err!=nil{break};out=append(out,map[string]any{"id":id,"title":title,"body":body,"created":created,"read":read>0,"pinned":pinned,"can_delete":allowDelete&&!pinned})}
+	for rows.Next(){var id,created,read int64;var title,body string;var pinned,allowDelete,required,acked,replies bool;var priority string;var replyCount int;if err=rows.Scan(&id,&title,&body,&created,&read,&pinned,&allowDelete,&priority,&required,&acked,&replies,&replyCount);err!=nil{break};out=append(out,map[string]any{"id":id,"title":title,"body":body,"created":created,"read":read>0,"pinned":pinned,"can_delete":allowDelete&&!pinned&&(!required||acked),"priority":priority,"require_ack":required,"acknowledged":acked,"replies_enabled":replies,"reply_count":replyCount})}
 	if err!=nil || rows.Err()!=nil {writeJSON(w,500,map[string]string{"error":"inbox unavailable"});return}
 	writeJSON(w,200,out)
 }
@@ -288,9 +300,13 @@ func (h *Handler) v2Deliver(ctx context.Context,id string,sender int64,a announc
 	for _,userID:=range targets {
 		if _,err=tx.ExecContext(ctx,"INSERT INTO burris_v2_inbox(job_id,user_id,title,body,created) VALUES(?,?,?,?,?)",id,userID,a.Title,a.Body,time.Now().Unix());err!=nil {note="Inbox storage failed";return}
 	}
+	if _,err=tx.ExecContext(ctx,"INSERT INTO burris_v2_inbox_meta(job_id,pinned) VALUES(?,?)",id,a.Pinned);err!=nil{note="Inbox metadata failed";return}
+	if a.Priority=="" {a.Priority="general"}
+	if _,err=tx.ExecContext(ctx,"INSERT INTO burris_v2_interaction_meta(job_id,priority,require_ack) VALUES(?,?,?)",id,a.Priority,a.RequireAck);err!=nil{note="Inbox interaction metadata failed";return}
 	if err=tx.Commit();err!=nil{note="Inbox storage failed";return}
 	recipients=len(targets)
 	status,note="inbox_only","Saved to inbox; no push-eligible devices"
+	if a.InboxOnly {skipped=len(targets);note="Published without phone alerts";return}
 	if len(pushIDs)==0{return}
 	if h.mgr==nil {note="Saved to inbox; push gateway disabled";return}
 	sendCtx,cancel:=context.WithTimeout(ctx,30*time.Second);defer cancel()
