@@ -19,7 +19,8 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
   static const base = '/api/admin/announcements-v2';
   final title = TextEditingController(), body = TextEditingController(), search = TextEditingController();
   final selected = <int>{};
-  String audience = 'self', mode = 'now', filter = 'all';
+  String audience = 'self', mode = 'now', filter = 'all', priority='general';
+  bool pinned=false, requireAck=false, inboxOnly=false;
   String? editing, requestKey, status, error;
   DateTime? when;
   int repeat = 0;
@@ -49,7 +50,7 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
   }
   String keyForRequest() {final r=Random.secure();return List.generate(24,(_)=>r.nextInt(256).toRadixString(16).padLeft(2,'0')).join();}
   void changed() => setState(()=>requestKey=null);
-  void reset() {title.clear();body.clear();selected.clear();editing=null;requestKey=null;when=null;repeat=0;mode='now';audience='self';}
+  void reset() {title.clear();body.clear();selected.clear();editing=null;requestKey=null;when=null;repeat=0;mode='now';audience='self';priority='general';pinned=false;requireAck=false;inboxOnly=false;}
   String dateText(dynamic raw) {
     if(raw is! num || raw<=0)return '—';
     final d=DateTime.fromMillisecondsSinceEpoch(raw.toInt()*1000,isUtc:true).toLocal();
@@ -75,11 +76,11 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
     if(kind=='scheduled'&&(when==null||!when!.isAfter(DateTime.now()))){setState(()=>status='Choose a future date and time.');return;}
     final k=editing??(requestKey??=keyForRequest());
     final ids=selected.toList()..sort();
-    final data={'key':k,'mode':kind,'title':title.text.trim(),'body':body.text.trim(),'audience':audience,'user_ids':audience=='selected'?ids:<int>[],'run_at':kind=='scheduled'?when!.millisecondsSinceEpoch~/1000:0,'repeat_days':kind=='scheduled'?repeat:0};
+    final data={'key':k,'mode':kind,'title':title.text.trim(),'body':body.text.trim(),'audience':audience,'user_ids':audience=='selected'?ids:<int>[],'run_at':kind=='scheduled'?when!.millisecondsSinceEpoch~/1000:0,'repeat_days':kind=='scheduled'?repeat:0,'priority':priority,'pinned':pinned,'require_ack':requireAck,'inbox_only':inboxOnly};
     setState((){busy=true;status=null;});
     try {
       if(kind=='now'||kind=='scheduled') {
-        if(!await confirm(kind=='now'?'Send announcement?':'Schedule announcement?','${title.text}\n\n${body.text}\n\nTo: ${audienceText(audience)}${audience=='selected'?' (${ids.length})':''}\n\nPhone alerts respect push preferences. Inbox copies are saved for addressed users.',kind=='now'?'Send':'Schedule'))return;
+        if(!await confirm(kind=='now'?'Send announcement?':'Schedule announcement?','${title.text}\n\n${body.text}\n\nTo: ${audienceText(audience)}${audience=='selected'?' (${ids.length})':''}\n\n${inboxOnly?'Inbox only: no phone alerts.':'Phone alerts respect push preferences.'} Inbox copies are saved for addressed users.',kind=='now'?'Send':'Schedule'))return;
       }
       if(!mounted)return;
       final api=ref.read(backendClientProvider);
@@ -96,6 +97,7 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
       final a='${j['audience']}';audience=['all','self','selected','admins'].contains(a)?a:'self';
       final ids=j['user_ids'];if(ids is List)selected.addAll(ids.whereType<num>().map((n)=>n.toInt()));
       editing=edit?'${j['id']}':null;
+      priority=['general','important','urgent','maintenance'].contains(j['priority'])?j['priority'] as String:'general';pinned=j['pinned']==true;requireAck=j['require_ack']==true;inboxOnly=j['inbox_only']==true;
       if(edit&&j['status']=='queued'&&(j['run_at'] as num? ?? 0)>DateTime.now().millisecondsSinceEpoch~/1000){
         mode='scheduled';when=DateTime.fromMillisecondsSinceEpoch((j['run_at'] as num).toInt()*1000,isUtc:true).toLocal();repeat=(j['repeat_days'] as num? ?? 0).toInt();
       }
@@ -199,10 +201,17 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
           Wrap(children:[TextButton(onPressed:busy?null:()=>setState((){selected.addAll(widget.users.map((u)=>u.id));requestKey=null;}),child:const Text('Select all')),TextButton(onPressed:busy?null:()=>setState((){selected.clear();requestKey=null;}),child:const Text('Clear selection'))]),
           for(final u in widget.users)CheckboxListTile(title:Text(u.username),subtitle:Text(devices[u.id]==null?'Status unavailable':'${devices[u.id]!['devices']} registered device(s) · ${devices[u.id]!['eligible']==true?'Push ready':'Inbox only'}'),value:selected.contains(u.id),onChanged:busy?null:(v)=>setState((){if(v==true){selected.add(u.id);}else{selected.remove(u.id);}requestKey=null;})),
         ],
+        if(audience=='all')Text('$eligible users currently push-ready; other users receive inbox copies only.'),
+        if(audience=='selected')Text('${selected.where((id)=>devices[id]?['eligible']==true).length} of ${selected.length} selected users currently push-ready.'),
+        if(audience=='admins')Text('${widget.users.where((u)=>u.isAdmin&&devices[u.id]?['eligible']==true).length} administrators currently push-ready.'),
         const SizedBox(height:12),
         TextField(controller:title,enabled:!busy,maxLength:100,decoration:const InputDecoration(labelText:'Notification title'),onChanged:(_)=>changed()),
         TextField(controller:body,enabled:!busy,maxLength:500,minLines:3,maxLines:6,decoration:const InputDecoration(labelText:'Message'),onChanged:(_)=>changed()),
-        Text('Notification preview',style:theme.textTheme.titleMedium),
+        DropdownButtonFormField<String>(key:ValueKey(priority),initialValue:priority,decoration:const InputDecoration(labelText:'Priority'),items:const[DropdownMenuItem(value:'general',child:Text('General')),DropdownMenuItem(value:'important',child:Text('Important')),DropdownMenuItem(value:'urgent',child:Text('Urgent')),DropdownMenuItem(value:'maintenance',child:Text('Maintenance'))],onChanged:busy?null:(v)=>setState((){priority=v??'general';requestKey=null;})),
+        SwitchListTile(title:const Text('Pin in inbox'),subtitle:const Text('Protect from user deletion'),value:pinned,onChanged:busy?null:(v)=>setState((){pinned=v;requestKey=null;})),
+        SwitchListTile(title:const Text('Require acknowledgment'),value:requireAck,onChanged:busy?null:(v)=>setState((){requireAck=v;requestKey=null;})),
+        SwitchListTile(title:const Text('Inbox only'),subtitle:const Text('Do not send phone alerts'),value:inboxOnly,onChanged:busy?null:(v)=>setState((){inboxOnly=v;requestKey=null;})),
+        Text(inboxOnly?'Inbox preview':'Notification preview',style:theme.textTheme.titleMedium),
         Card(child:ListTile(leading:const Icon(Icons.notifications_active_outlined),title:Text(title.text.isEmpty?'Your title':title.text),subtitle:Text(body.text.isEmpty?'Your message':body.text))),
         const SizedBox(height:12),
         SegmentedButton<String>(segments:const[ButtonSegment(value:'now',label:Text('Send now')),ButtonSegment(value:'scheduled',label:Text('Schedule'))],selected:{mode},onSelectionChanged:busy?null:(v)=>setState((){mode=v.first;requestKey=null;})),
