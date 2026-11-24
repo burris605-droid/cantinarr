@@ -242,6 +242,7 @@ func main() {
 		log.Println("Push notifications disabled (CANTINARR_PUSH_GATEWAY_URL unset)")
 	}
 	pushHandler := push.NewHandler(database, pushManager, logger)
+	pushHandler.StartAnnouncementWorker(ctx)
 
 	// One push notifier drives both the request-decision/pending fan-out and the
 	// new-content (movie/episode available) pushes. It is built only when push is
