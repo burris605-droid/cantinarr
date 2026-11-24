@@ -137,13 +137,44 @@ class _AnnouncementsScreenState extends ConsumerState<AnnouncementsScreen> {
       ]),
     ])));
   }
+  Future<void> options() async {
+    if(busy)return;
+    setState(()=>busy=true);
+    try{
+      final api=ref.read(backendClientProvider);
+      final r=await api.get('$base/options');
+      final o=Map<String,dynamic>.from(r.data as Map);
+      if(!mounted)return;
+      var retention=o['retention']==true,welcome=o['welcome']==true;
+      var welcomeTitle=o['title'] as String,welcomeBody=o['body'] as String;
+      final form=GlobalKey<FormState>();
+      final result=await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(
+        title:const Text('Notification automation'),
+        content:SingleChildScrollView(child:Form(key:form,child:Column(mainAxisSize:MainAxisSize.min,children:[
+          SwitchListTile(title:const Text('Auto-clear old V2 history'),subtitle:const Text('After 30 days. Personal inboxes and schedules stay intact.'),value:retention,onChanged:(v)=>update(()=>retention=v)),
+          SwitchListTile(title:const Text('Automatic welcome'),subtitle:const Text('New accounts only, once they have enabled push. Existing accounts are excluded when enabled.'),value:welcome,onChanged:(v)=>update(()=>welcome=v)),
+          TextFormField(initialValue:welcomeTitle,maxLength:100,decoration:const InputDecoration(labelText:'Welcome title'),onChanged:(v)=>welcomeTitle=v,validator:(v)=>v==null||v.trim().isEmpty?'Required':null),
+          TextFormField(initialValue:welcomeBody,maxLength:500,minLines:2,maxLines:4,decoration:const InputDecoration(labelText:'Welcome message'),onChanged:(v)=>welcomeBody=v,validator:(v)=>v==null||v.trim().isEmpty?'Required':null),
+        ]))),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancel')),
+          FilledButton(onPressed:(){if(form.currentState?.validate()==true)Navigator.pop(ctx,{'retention':retention,'welcome':welcome,'title':welcomeTitle.trim(),'body':welcomeBody.trim()});},child:const Text('Save')),
+        ],
+      )));
+      if(result==null||!mounted)return;
+      await api.put('$base/options',data:result);
+      if(mounted)setState(()=>status='Automation settings saved.');
+    }catch(_){if(mounted)setState(()=>status='Could not save or load automation settings.');}
+    finally{if(mounted)setState(()=>busy=false);}
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme=Theme.of(context);
     final eligible=devices.values.where((d)=>d['eligible']==true).length;
     final queued=jobs.where((j)=>['queued','running'].contains(j['status'])).length;
     final done=jobs.where((j)=>j['status']=='completed').length;
-    return Scaffold(appBar:AppBar(title:const Text('Announcement center'),actions:[IconButton(onPressed:busy?null:load,icon:const Icon(Icons.refresh),tooltip:'Refresh')]),
+    return Scaffold(appBar:AppBar(title:const Text('Announcement center'),actions:[IconButton(onPressed:busy?null:options,icon:const Icon(Icons.settings_outlined),tooltip:'Automation settings'),IconButton(onPressed:busy?null:load,icon:const Icon(Icons.refresh),tooltip:'Refresh')]),
       body:Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:840),child:ListView(padding:const EdgeInsets.all(20),children:[
         Text('BURRIS EDITION · V2',style:theme.textTheme.labelLarge?.copyWith(color:theme.colorScheme.primary)),
         Text('Broadcast control',style:theme.textTheme.headlineMedium),
